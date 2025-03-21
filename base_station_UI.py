@@ -12,10 +12,15 @@ class Robot:
     def __init__(self, robot_id, name="Robot", color="blue", ip_address=None, port=None):
         self.robot_ip = ip_address
         self.robot_port = port
+        self.socket = None
         self.robot_id = robot_id
+        self.recieve_thread = None
         self.name = f"{name} {robot_id}"
         self.connected = False
         self.color = color
+        self.ball_position = (6, 4.5)
+        self.obstacles = []
+        self.lock = threading.Lock()
         # Field positions in meters (assuming 12m x 9m field)
         self.position = (0, 0)
         # Orientation in degrees, 0 = facing "east" in our coordinate assumption
@@ -44,24 +49,57 @@ class Robot:
         self.parameters.update(parameters)
         print(f"Updated parameters for {self.name}")
 
+    def send_to_robot(self, msg):
+        if self.socket:
+            self.socket.sendto(msg.encode(), (self.robot_ip, self.robot_port))
+            print(f"Sent to {self.name}: {msg}")
+        else:
+            print(f"Socket not connected for {self.name}")
+
+    def receive_from_robot(self):
+        while self.connected:
+            try:
+                data, addr = self.socket.recvfrom(1024)
+                self.lock.acquire()
+                print(f"Received data from {self.name}: {data.decode()}")
+                #TODO: Parse data and update self.ball_position, position, orientation, obstacles
+
+                self.lock.release()
+            except Exception as e:
+                print(f"Error receiving data from {self.name}: {e}")
+                break
+
 
 class GlobalWorldMap:
     def __init__(self):
         # 12m x 9m field
         self.field_dimensions = (12, 9)
         # A global ball position
-        self.ball_position = (6, 4.5)  # Center of the field
+        self.ball_position = [6, 4.5]  # Center of the field
         self.obstacles = []
 
     def update_from_robots(self, robots):
         # Sensor fusion logic goes here
-        pass
+        self.ball_position = [0, 0]
+        self.obstacles = []
+        for robot in robots:
+            robot.lock.acquire()
+            self.ball_position[0] += robot.ball_position[0]
+            self.ball_position[1] += robot.ball_position[1]
+            self.obstacles.extend(robot.obstacles)
+            robot.lock.release()
+        self.ball_position[0] /= len(robots)
+        self.ball_position[1] /= len(robots)
 
 class BaseStationUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Team Era Base Station")
         self.root.geometry("1200x800")
+
+        self.global_world = GlobalWorldMap()
+        self.current_detailed_robot = None
+        self.logging_text = None
 
         # HOME ROBOTS
         self.robots = [Robot(i + 1, "Player", color="blue") for i in range(5)]
@@ -77,8 +115,8 @@ class BaseStationUI:
         self.robots[4].position = (1, 1)
         self.robots[4].orientation = 270
 
-        self.robots[0].robot_ip = "192.168.123.88"
-        self.robots[0].robot_port = 10001
+        # self.robots[0].robot_ip = "192.168.123.88"
+        # self.robots[0].robot_port = 10001
 
         # OPPONENT ROBOTS
         self.opponents = [Robot(i + 1, "Opponent", color="red") for i in range(5)]
@@ -93,10 +131,6 @@ class BaseStationUI:
         self.opponents[3].orientation = 315
         self.opponents[4].position = (10, 3)
         self.opponents[4].orientation = 90
-
-        self.global_world = GlobalWorldMap()
-        self.current_detailed_robot = None
-        self.logging_text = None
 
         # We'll create logic after the UI so we can pass self to it
         self.logic = None
@@ -503,6 +537,7 @@ class BaseStationUI:
                 print(f"Sending parameters to {self.current_detailed_robot.name}:")
                 for param, val in self.current_detailed_robot.parameters.items():
                     print(f"  {param}: {val}")
+                    self.current_detailed_robot.send_to_robot(f"SET {param} {val}")
                 messagebox.showinfo("Success", "Parameters sent to robot!")
             except ValueError:
                 messagebox.showerror("Error", "Invalid parameter value. Please enter numeric values.")
@@ -521,7 +556,7 @@ class BaseStationUI:
                     print(f"Sending parameters to {robot.name}:")
                     for p, val in robot.parameters.items():
                         print(f"  {p}: {val}")
-
+                        robot.send_to_robot(f"SET {p} {val}")
                 messagebox.showinfo("Success", "Parameters sent to ALL robots!")
             except ValueError:
                 messagebox.showerror("Error", "Invalid parameter value. Please enter numeric values.")

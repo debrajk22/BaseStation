@@ -31,19 +31,24 @@ class BaseStationLogic:
         self.connection_status = True
         for robot in self.robots:
             if robot.robot_ip is not None:
-                robot_ip = robot.ip_address  # Assuming each robot has an ip_address attribute
-                robot_port = robot.port  # Assuming each robot has a port attribute
-                robot_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                robot_socket.connect((robot_ip, robot_port))
-                robot.socket = robot_socket  # Store the socket in the robot object
+                robot.lock.acquire()
+                robot.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 robot.connected = True
+                robot.recieve_thread = threading.Thread(target=robot.receive_from_robot, daemon=True).start()
+
                 if hasattr(robot, "status_label"):
                     robot.status_label.config(text="Connected", fg="green")
+                robot.lock.release()
         print("Connected to robots")
 
     def disconnect_from_robots(self):
         self.connection_status = False
         for robot in self.robots:
+            if robot.socket:
+                robot.socket.close()
+                robot.socket = None
+                if robot.receive_thread and robot.receive_thread.is_alive():
+                    robot.receive_thread.join()
             robot.connected = False
             if hasattr(robot, "status_label"):
                 robot.status_label.config(text="Disconnected", fg="red")
@@ -126,6 +131,7 @@ def main():
     app.logic = logic
 
     # Example: logic.connect_to_robots() or logic.disconnect_from_robots()
+    logic.connect_to_robots()
     logic.update_world_state()
     root.mainloop()
 
