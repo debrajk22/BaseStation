@@ -6,69 +6,7 @@ import math
 import socket
 import threading
 from PIL import Image, ImageTk
-
-
-class Robot:
-    def __init__(self, robot_id, name="Robot", color="blue", ip_address=None, port=None):
-        self.robot_ip = ip_address
-        self.robot_port = port
-        self.socket = None
-        self.robot_id = robot_id
-        self.recieve_thread = None
-        self.name = f"{name} {robot_id}"
-        self.connected = False
-        self.color = color
-        self.ball_position = (6, 4.5)
-        self.obstacles = []
-        self.lock = threading.Lock()
-        # Field positions in meters (assuming 12m x 9m field)
-        self.position = (0, 0)
-        # Orientation in degrees, 0 = facing "east" in our coordinate assumption
-        self.orientation = 0
-        self.local_world_map = {}
-        self.parameters = {
-            "max_speed": 2.0,
-            "rotation_speed": 1.0,
-            "kick_power": 0.8,
-            "acceleration": 1.5,
-            "deceleration": 1.5,
-            "battery_level": 100,  # Default battery level
-            "vision_range": 5.0,
-            "ball_detection_threshold": 0.7,
-            "obstacle_detection_threshold": 0.6,
-            "communication_range": 20.0
-        }
-
-    def update_local_world_map(self, data):
-        self.local_world_map = data
-
-    def move(self, direction):
-        print(f"Moving {self.name} in direction: {direction}")
-
-    def set_parameters(self, parameters):
-        self.parameters.update(parameters)
-        print(f"Updated parameters for {self.name}")
-
-    def send_to_robot(self, msg):
-        if self.socket:
-            self.socket.sendto(msg.encode(), (self.robot_ip, self.robot_port))
-            print(f"Sent to {self.name}: {msg}")
-        else:
-            print(f"Socket not connected for {self.name}")
-
-    def receive_from_robot(self):
-        while self.connected:
-            try:
-                data, addr = self.socket.recvfrom(1024)
-                self.lock.acquire()
-                print(f"Received data from {self.name}: {data.decode()}")
-                #TODO: Parse data and update self.ball_position, position, orientation, obstacles
-
-                self.lock.release()
-            except Exception as e:
-                print(f"Error receiving data from {self.name}: {e}")
-                break
-
+from base_station_Robot import *
 
 class GlobalWorldMap:
     def __init__(self):
@@ -134,6 +72,7 @@ class BaseStationUI:
 
         # We'll create logic after the UI so we can pass self to it
         self.logic = None
+        self.is_playing = False
 
         self.setup_ui()
         self.robot_images = {}
@@ -285,9 +224,9 @@ class BaseStationUI:
         # Logging buttons
         log_buttons_frame = tk.Frame(logging_panel)
         log_buttons_frame.pack(fill=tk.X, pady=5)
-        tk.Button(log_buttons_frame, text="Start Logging", command=self.start_logging).pack(side=tk.LEFT, padx=5)
-        tk.Button(log_buttons_frame, text="Stop Logging", command=self.stop_logging).pack(side=tk.LEFT, padx=5)
-        tk.Button(log_buttons_frame, text="Save Log", command=self.save_log).pack(side=tk.LEFT, padx=5)
+        tk.Button(log_buttons_frame, text="Start Logging", command=lambda: self.start_logging()).pack(side=tk.LEFT, padx=5)
+        tk.Button(log_buttons_frame, text="Stop Logging", command=lambda: self.stop_logging()).pack(side=tk.LEFT, padx=5)
+        tk.Button(log_buttons_frame, text="Save Log", command=lambda: self.save_log()).pack(side=tk.LEFT, padx=5)
 
         # Bottom Panel: Additional Buttons
         bottom_panel = tk.Frame(main_frame, height=50)
@@ -295,9 +234,9 @@ class BaseStationUI:
         additional_btn_frame = tk.Frame(bottom_panel)
         additional_btn_frame.pack(side=tk.LEFT, padx=20)
 
-        functions = ["Play/Pause", "Reset Position", "Camera Check"]
-        for func in functions:
-            tk.Button(additional_btn_frame, text=func, width=12).pack(side=tk.LEFT, padx=5)
+        tk.Button(additional_btn_frame, text="Play/Pause", width=12, command=lambda: self.play_pause()).pack(side=tk.LEFT, padx=5)
+        tk.Button(additional_btn_frame, text="Reset Position", width=12, command=lambda: self.reset_position()).pack(side=tk.LEFT, padx=5)
+        tk.Button(additional_btn_frame, text="Camera Check", width=12, command=lambda: self.camera_check()).pack(side=tk.LEFT, padx=5)
 
     ###########################################################################
     # RefBox UI Integration
@@ -455,9 +394,9 @@ class BaseStationUI:
         control_frame = tk.Frame(detail_window)
         control_frame.pack(fill=tk.X, pady=10)
 
-        tk.Button(control_frame, text="test kicking angle").pack(side=tk.LEFT, padx=10)
-        tk.Button(control_frame, text="Charge").pack(side=tk.LEFT, padx=10)
-        tk.Button(control_frame, text="Kick").pack(side=tk.LEFT, padx=10)
+        tk.Button(control_frame, text="Test kicking angle", command=lambda: self.test_robot("test_kick_angle")).pack(side=tk.LEFT, padx=10)
+        tk.Button(control_frame, text="Charge", command=lambda: self.test_robot("charge")).pack(side=tk.LEFT, padx=10)
+        tk.Button(control_frame, text="Kick", command=lambda: self.test_robot("kick")).pack(side=tk.LEFT, padx=10)
         tk.Button(control_frame, text="Close", command=detail_window.destroy).pack(side=tk.RIGHT, padx=20)
 
         # Movement Controls
@@ -582,8 +521,15 @@ class BaseStationUI:
     ###########################################################################
     def move_robot(self, direction):
         if self.current_detailed_robot:
-            self.current_detailed_robot.move(direction)
+            self.current_detailed_robot.send_to_robot(f"MOVE {direction}")
             self.log_message(f"Moved {self.current_detailed_robot.name} {direction}\n")
+        else:
+            print("No robot selected")
+
+    def test_robot(self, test_msg):
+        if self.current_detailed_robot:
+            self.current_detailed_robot.send_to_robot(f"TEST {test_msg}")
+            self.log_message(f"Sent test command to {self.current_detailed_robot.name}: {test_msg}\n")
         else:
             print("No robot selected")
 
@@ -609,3 +555,24 @@ class BaseStationUI:
         if self.logging_text:
             self.logging_text.insert(tk.END, msg)
             self.logging_text.see(tk.END)
+
+    def play_pause(self):
+        self.is_playing = not self.is_playing
+        if self.is_playing:
+            print("Playing...")
+            for robot in self.robots:
+                robot.send_to_robot("PLAY")
+        else:
+            print("Paused.")
+            for robot in self.robots:
+                robot.send_to_robot("PAUSE")
+    
+    def reset_position(self):
+        for robot in self.robots:
+            robot.send_to_robot("RESET POSITION")
+        self.log_message("Resetting positions...\n")
+    
+    def camera_check(self):
+        for robot in self.robots:
+            robot.send_to_robot("CHECK CAMERA")
+        self.log_message("Checking camera...\n")

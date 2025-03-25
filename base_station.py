@@ -8,10 +8,6 @@ import threading
 from PIL import Image, ImageTk
 from base_station_UI import *
 
-###############################################################################
-# Robot, GlobalWorldMap, and BaseStationLogic Classes
-###############################################################################
-
 class BaseStationLogic:
     def __init__(self, ui):
         self.ui = ui
@@ -39,7 +35,7 @@ class BaseStationLogic:
                 if hasattr(robot, "status_label"):
                     robot.status_label.config(text="Connected", fg="green")
                 robot.lock.release()
-        print("Connected to robots")
+                print("Connected to robot", robot.name)
 
     def disconnect_from_robots(self):
         self.connection_status = False
@@ -54,9 +50,6 @@ class BaseStationLogic:
                 robot.status_label.config(text="Disconnected", fg="red")
         print("Disconnected from robots")
 
-    ###########################################################################
-    # RefBox Connection
-    ###########################################################################
     def connect_to_refbox(self, ip="127.0.0.1", port=28097):
         """Connect to the RefBox in a separate thread so UI doesn't freeze."""
         if self.refbox_connected:
@@ -88,6 +81,7 @@ class BaseStationLogic:
                         self.refbox_messages.append(message)
                         # Also log to the UI
                         self.ui.log_refbox_message(message)
+                        self.parse_message(message)
 
         except (ConnectionError, OSError) as e:
             print(f"RefBox connection error: {e}")
@@ -106,9 +100,6 @@ class BaseStationLogic:
                 pass
         print("Stopped RefBox communication.")
 
-    ###########################################################################
-    # Periodic Updates
-    ###########################################################################
     def update_world_state(self):
         # Update global world map from robots
         self.global_world.update_from_robots(self.robots)
@@ -119,10 +110,9 @@ class BaseStationLogic:
         # Keep scheduling next update
         self.ui.root.after(100, self.update_world_state)
 
+    def parse_message(self, message):
+        print(message)
 
-###############################################################################
-# Main Entry
-###############################################################################
 def main():
     root = tk.Tk()
     app = BaseStationUI(root)
